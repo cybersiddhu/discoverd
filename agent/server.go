@@ -5,9 +5,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/coreos/go-etcd/etcd"
 	"github.com/flynn/rpcplus"
+	"github.com/flynn/go-flynn/attempt"
 	rpc "github.com/flynn/rpcplus/comborpc"
 )
 
@@ -39,7 +41,6 @@ type DiscoveryBackend interface {
 	Subscribe(name string) (UpdateStream, error)
 	Register(name string, addr string, attrs map[string]string) error
 	Unregister(name string, addr string) error
-	Heartbeat(name string, addr string) error
 }
 
 type Agent struct {
@@ -47,9 +48,28 @@ type Agent struct {
 	Address string
 }
 
+// Attempts is the attempt strategy that is used to connect to etcd.
+var Attempts = attempt.Strategy{
+	Min:   5,
+	Total: 5 * time.Second,
+	Delay: 200 * time.Millisecond,
+}
+
 func NewServer(addr string, etcdAddrs []string) *Agent {
+	client := etcd.NewClient(etcdAddrs)
+
+	// check to make sure that etcd is online and accepting connections
+	// etcd takes a while to come online, so we attempt a GET multiple times
+	err := Attempts.Run(func() (err error) {
+		_, err = client.Get("/", false, false)
+		return
+	})
+	if err != nil {
+		log.Fatalf("Failed to connect to etcd at %v: %q", etcdAddrs, err)
+	}
+
 	return &Agent{
-		Backend: &EtcdBackend{Client: etcd.NewClient(etcdAddrs)},
+		Backend: &EtcdBackend{Client: client},
 		Address: addr,
 	}
 }
@@ -117,16 +137,5 @@ func (s *Agent) Unregister(args *Args, ret *struct{}) error {
 		return err
 	}
 	log.Println("Unregister:", args.Name, addr)
-	return nil
-}
-
-func (s *Agent) Heartbeat(args *Args, ret *struct{}) error {
-	addr := expandAddr(args.Addr)
-	err := s.Backend.Heartbeat(args.Name, addr)
-	if err != nil {
-		log.Println("Heartbeat: error:", err)
-		return err
-	}
-	log.Println("Heartbeat:", args.Name, addr)
 	return nil
 }

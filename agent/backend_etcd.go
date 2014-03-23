@@ -61,10 +61,7 @@ func (b *EtcdBackend) responseToUpdate(resp *etcd.Response, node *etcd.Node) *Se
 	}
 	serviceName := splitKey[3]
 	serviceAddr := splitKey[4]
-	//if "get" == resp.Action || ("set" == resp.Action && node.Value != node.PrevValue) {
-	// TODO: the above is broken right now. until then what happens if we don't ignore heartbeats?
-	// should be resolved soon: http://thread.gmane.org/gmane.comp.distributed.etcd/56
-	if "get" == resp.Action || "set" == resp.Action {
+	if "get" == resp.Action || "set" == resp.Action && (resp.PrevNode == nil || node.Value != resp.PrevNode.Value) {
 		// GET is because getCurrentState returns responses of Action GET.
 		// some SETs are heartbeats, so we ignore SETs where value didn't change.
 		var serviceAttrs map[string]string
@@ -105,16 +102,6 @@ func (b *EtcdBackend) Register(name, addr string, attrs map[string]string) error
 		return err
 	}
 	_, err = b.Client.Set(servicePath(name, addr), string(attrsJson), HeartbeatIntervalSecs+MissedHearbeatTTL)
-	return err
-}
-
-func (b *EtcdBackend) Heartbeat(name, addr string) error {
-	resp, err := b.Client.Get(servicePath(name, addr), false, false)
-	if err != nil {
-		return err
-	}
-	// ignore test failure, it doesn't need a heartbeat if it was just set.
-	_, err = b.Client.CompareAndSwap(servicePath(name, addr), resp.Node.Value, HeartbeatIntervalSecs+MissedHearbeatTTL, resp.Node.Value, resp.Node.ModifiedIndex)
 	return err
 }
 
